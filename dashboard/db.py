@@ -32,39 +32,11 @@ from app.config import settings
 def _get_database_url() -> str:
     """
     Prefer Streamlit Cloud secrets, fall back to .env / default.
-    On Streamlit Cloud, secrets are injected as STREAMLIT_SECRETS__DATABASE_URL.
     """
-    # Debug: print all env vars that contain DATABASE or SUPABASE
-    print("[DB] Looking for DATABASE_URL...")
-    for key in os.environ:
-        if 'DATABASE' in key or 'SUPABASE' in key:
-            val = os.environ[key]
-            print(f"[DB] Found env var: {key}={val[:40]}...")
-
-    # Try Streamlit Cloud env var (STREAMLIT_SECRETS__DATABASE_URL)
-    env_url = os.getenv('STREAMLIT_SECRETS__DATABASE_URL')
-    if env_url:
-        print(f"[DB] ✅ Using DATABASE_URL from STREAMLIT_SECRETS__DATABASE_URL")
-        return env_url
-
-    # Try plain environment variable
-    env_url = os.getenv('DATABASE_URL')
-    if env_url:
-        print(f"[DB] ✅ Using DATABASE_URL from environment")
-        return env_url
-
-    # Try st.secrets (local dev)
-    try:
-        if hasattr(st, 'secrets') and 'DATABASE_URL' in st.secrets:
-            url = st.secrets['DATABASE_URL']
-            print(f"[DB] ✅ Using DATABASE_URL from st.secrets")
-            return url
-    except Exception as e:
-        print(f"[DB] st.secrets failed: {e}")
-
-    # Fall back to settings (SQLite for local dev)
-    print(f"[DB] ⚠️  Using fallback DATABASE_URL from settings (SQLite)")
-    return settings.database_url
+    # HARDCODED for Streamlit Cloud testing
+    hardcoded_url = "postgresql://postgres.xqxqvbgbycczaqkspvyz:nAvyfG5QFtJreaDC@aws-0-eu-west-1.pooler.supabase.com:5432/helias_finpilot_main2?sslmode=require"
+    print(f"[DB] ✅ Using HARDCODED Supabase URL")
+    return hardcoded_url
 
 
 @st.cache_resource
