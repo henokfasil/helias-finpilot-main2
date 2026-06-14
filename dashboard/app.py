@@ -44,6 +44,12 @@ with st.sidebar:
     st.caption("Data refreshes every 30 seconds.")
 
 # ── Load data ─────────────────────────────────────────────────────────────────
+import os
+db_url = os.getenv('DATABASE_URL', 'NOT SET')
+print(f"[APP] DATABASE_URL env var: {db_url[:50]}..." if db_url != 'NOT SET' else f"[APP] DATABASE_URL: {db_url}")
+if hasattr(st, 'secrets') and 'DATABASE_URL' in st.secrets:
+    print(f"[APP] st.secrets['DATABASE_URL'] found")
+
 company  = load_company()
 all_txns = load_transactions()
 
