@@ -32,19 +32,28 @@ from app.config import settings
 def _get_database_url() -> str:
     """
     Prefer Streamlit Cloud secrets, fall back to .env / default.
-    On Streamlit Cloud, secrets are injected via st.secrets.
+    On Streamlit Cloud, secrets are injected as STREAMLIT_SECRETS__DATABASE_URL.
     """
-    # Try Streamlit secrets first
-    if hasattr(st, 'secrets') and 'DATABASE_URL' in st.secrets:
-        url = st.secrets['DATABASE_URL']
-        print(f"[DB] Using DATABASE_URL from Streamlit secrets")
-        return url
+    # Try Streamlit Cloud env var (STREAMLIT_SECRETS__DATABASE_URL)
+    env_url = os.getenv('STREAMLIT_SECRETS__DATABASE_URL')
+    if env_url:
+        print(f"[DB] Using DATABASE_URL from STREAMLIT_SECRETS__DATABASE_URL")
+        return env_url
 
-    # Try environment variable
+    # Try plain environment variable
     env_url = os.getenv('DATABASE_URL')
     if env_url:
         print(f"[DB] Using DATABASE_URL from environment")
         return env_url
+
+    # Try st.secrets (local dev)
+    try:
+        if hasattr(st, 'secrets') and 'DATABASE_URL' in st.secrets:
+            url = st.secrets['DATABASE_URL']
+            print(f"[DB] Using DATABASE_URL from st.secrets")
+            return url
+    except Exception:
+        pass
 
     # Fall back to settings (SQLite for local dev)
     print(f"[DB] Using fallback DATABASE_URL from settings (SQLite)")
