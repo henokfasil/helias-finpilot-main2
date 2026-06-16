@@ -35,19 +35,26 @@ def _get_database_url() -> str:
     On Streamlit Cloud, secrets are injected via st.secrets.
     """
     try:
-        return st.secrets["DATABASE_URL"]
+        url = st.secrets["DATABASE_URL"]
+        print(f"DEBUG: Using DATABASE_URL from secrets: {url[:80]}...")
+        return url
     except (KeyError, FileNotFoundError):
-        return settings.database_url
+        url = settings.database_url
+        print(f"DEBUG: Using DATABASE_URL from settings: {url[:80]}...")
+        return url
 
 
 @st.cache_resource
 def get_engine():
     """Single shared engine for the dashboard (read-only)."""
     db_url = _get_database_url()
-    return create_engine(
+    print(f"DEBUG: Creating engine with URL: {db_url[:80]}...")
+    engine = create_engine(
         db_url,
         connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
     )
+    print("DEBUG: Engine created successfully")
+    return engine
 
 
 @st.cache_data(ttl=30)
