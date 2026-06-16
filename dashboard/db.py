@@ -22,11 +22,18 @@ from pathlib import Path
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+print("=" * 80)
+print("DB.PY LOADING - Checking secrets...")
+
 import pandas as pd
 import streamlit as st
+
+print(f"Streamlit secrets keys: {list(st.secrets.keys()) if hasattr(st.secrets, 'keys') else 'NO SECRETS'}")
+
 from sqlalchemy import create_engine, text
 
 from app.config import settings
+print("=" * 80)
 
 
 def _get_database_url() -> str:
