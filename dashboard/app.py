@@ -44,8 +44,21 @@ with st.sidebar:
     st.caption("Data refreshes every 30 seconds.")
 
 # ── Load data ─────────────────────────────────────────────────────────────────
-company  = load_company()
-all_txns = load_transactions()
+import os
+db_url = os.getenv('DATABASE_URL', 'NOT SET')
+print(f"[APP] DATABASE_URL env var: {db_url[:50]}..." if db_url != 'NOT SET' else f"[APP] DATABASE_URL: {db_url}")
+if hasattr(st, 'secrets') and 'DATABASE_URL' in st.secrets:
+    print(f"[APP] st.secrets['DATABASE_URL'] found")
+
+try:
+    company  = load_company()
+    all_txns = load_transactions()
+except Exception as e:
+    st.error(f"❌ Database Error: {str(e)}")
+    company = {"name": "Helias AI (DB Error)", "id": 1}
+    all_txns = pd.DataFrame()
+    import traceback
+    st.write(traceback.format_exc())
 
 company_name     = company.get("name", "Helias AI and Analytics")
 base_currency    = company.get("base_currency", "ETB")
