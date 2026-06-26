@@ -20,6 +20,7 @@ import streamlit as st
 
 from dashboard.db import load_transactions, load_company
 from dashboard.components import page_header, kpi_card, divider
+from dashboard.auth import require_authentication, show_user_info
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -28,6 +29,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# ── Authentication ────────────────────────────────────────────────────────────
+if not require_authentication():
+    st.stop()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -42,6 +47,9 @@ with st.sidebar:
     """)
     divider_year = st.selectbox("Fiscal Year", options=list(range(date.today().year, 2023, -1)))
     st.caption("Data refreshes every 30 seconds.")
+
+# ── User Info & Logout ────────────────────────────────────────────────────────
+show_user_info()
 
 # ── Load data ─────────────────────────────────────────────────────────────────
 import os
