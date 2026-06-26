@@ -8,6 +8,11 @@ font = "sans serif"
 [server]
 headless = true
 port = 8501
+maxUploadSize = 200
+client.maxMessageSize = 200
 
 [browser]
 gatherUsageStats = false
+
+[logger]
+level = "debug"

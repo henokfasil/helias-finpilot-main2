@@ -30,7 +30,8 @@ import streamlit as st
 
 print(f"Streamlit secrets keys: {list(st.secrets.keys()) if hasattr(st.secrets, 'keys') else 'NO SECRETS'}")
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, text, pool
+from sqlalchemy.pool import QueuePool, StaticPool
 
 from app.config import settings
 print("=" * 80)
@@ -53,15 +54,51 @@ def _get_database_url() -> str:
 
 @st.cache_resource
 def get_engine():
-    """Single shared engine for the dashboard (read-only)."""
+    """
+    Single shared engine for the dashboard (read-only).
+    Properly configured for Supabase PostgreSQL or local SQLite.
+    """
     db_url = _get_database_url()
     print(f"DEBUG: Creating engine with URL: {db_url[:80]}...")
-    engine = create_engine(
-        db_url,
-        connect_args={"check_same_thread": False} if "sqlite" in db_url else {},
-    )
+
+    if "sqlite" in db_url:
+        # SQLite: use StaticPool for local development
+        engine = create_engine(
+            db_url,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    else:
+        # PostgreSQL/Supabase: use QueuePool with optimized settings
+        engine = create_engine(
+            db_url,
+            poolclass=QueuePool,
+            pool_size=5,                    # Reduce pool size for Supabase limits
+            max_overflow=2,                 # Allow temporary connections if needed
+            pool_pre_ping=True,             # Test connections before use (prevents stale connection errors)
+            pool_recycle=3600,              # Recycle connections after 1 hour
+            connect_args={
+                "connect_timeout": 10,      # 10 second connection timeout
+            },
+        )
+
     print("DEBUG: Engine created successfully")
     return engine
+
+
+def _execute_query_safe(engine, sql, params=None, as_dataframe=True):
+    """Safely execute a database query with error handling."""
+    try:
+        with engine.connect() as conn:
+            if as_dataframe:
+                return pd.read_sql(sql, conn, params=params)
+            else:
+                row = conn.execute(sql, params or {}).fetchone()
+                return dict(row._mapping) if row else {}
+    except Exception as e:
+        print(f"ERROR in query execution: {e}")
+        st.error(f"Database connection error: {str(e)[:100]}")
+        return pd.DataFrame() if as_dataframe else {}
 
 
 @st.cache_data(ttl=30)
@@ -90,11 +127,15 @@ def load_transactions(company_id: int = 1) -> pd.DataFrame:
         WHERE t.company_id = :cid
         ORDER BY t.transaction_date DESC, t.id DESC
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"cid": company_id})
-    df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-    return df
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sql, conn, params={"cid": company_id})
+        df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+        return df
+    except Exception as e:
+        print(f"ERROR loading transactions: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
@@ -119,13 +160,17 @@ def load_attachments(company_id: int = 1) -> pd.DataFrame:
         WHERE a.company_id = :cid
         ORDER BY a.created_at DESC
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"cid": company_id})
-    if not df.empty:
-        df["created_at"] = pd.to_datetime(df["created_at"])
-        df["transaction_date"] = pd.to_datetime(df["transaction_date"])
-        df["file_size_kb"] = (df["file_size_bytes"] / 1024).round(1)
-    return df
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sql, conn, params={"cid": company_id})
+        if not df.empty:
+            df["created_at"] = pd.to_datetime(df["created_at"])
+            df["transaction_date"] = pd.to_datetime(df["transaction_date"])
+            df["file_size_kb"] = (df["file_size_bytes"] / 1024).round(1)
+        return df
+    except Exception as e:
+        print(f"ERROR loading attachments: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
@@ -137,17 +182,26 @@ def load_categories(company_id: int = 1) -> pd.DataFrame:
         WHERE company_id = :cid
         ORDER BY type, name
     """)
-    with engine.connect() as conn:
-        return pd.read_sql(sql, conn, params={"cid": company_id})
+    try:
+        with engine.connect() as conn:
+            return pd.read_sql(sql, conn, params={"cid": company_id})
+    except Exception as e:
+        print(f"ERROR loading categories: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
 def load_company(company_id: int = 1) -> dict:
     engine = get_engine()
     sql = text("SELECT * FROM companies WHERE id = :cid LIMIT 1")
-    with engine.connect() as conn:
-        row = conn.execute(sql, {"cid": company_id}).fetchone()
-    return dict(row._mapping) if row else {}
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sql, {"cid": company_id}).fetchone()
+        return dict(row._mapping) if row else {}
+    except Exception as e:
+        print(f"ERROR loading company {company_id}: {e}")
+        st.error(f"Failed to load company data: {str(e)[:100]}")
+        return {}
 
 
 @st.cache_data(ttl=30)
@@ -174,14 +228,18 @@ def load_tax_data(company_id: int = 1) -> pd.DataFrame:
           AND t.status = 'confirmed'
         ORDER BY t.transaction_date DESC
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"cid": company_id})
-    if not df.empty:
-        df["transaction_date"] = pd.to_datetime(df["transaction_date"])
-        df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-        df["vat_amount"] = pd.to_numeric(df["vat_amount"], errors="coerce").fillna(0)
-        df["withholding_tax"] = pd.to_numeric(df["withholding_tax"], errors="coerce").fillna(0)
-    return df
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sql, conn, params={"cid": company_id})
+        if not df.empty:
+            df["transaction_date"] = pd.to_datetime(df["transaction_date"])
+            df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
+            df["vat_amount"] = pd.to_numeric(df["vat_amount"], errors="coerce").fillna(0)
+            df["withholding_tax"] = pd.to_numeric(df["withholding_tax"], errors="coerce").fillna(0)
+        return df
+    except Exception as e:
+        print(f"ERROR loading tax data: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
@@ -214,14 +272,18 @@ def load_financial_data(company_id: int = 1) -> pd.DataFrame:
           AND t.status = 'confirmed'
         ORDER BY t.transaction_date ASC, t.id ASC
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"cid": company_id})
-    df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
-    df["vat_amount"] = pd.to_numeric(df["vat_amount"], errors="coerce").fillna(0)
-    df["withholding_tax"] = pd.to_numeric(df["withholding_tax"], errors="coerce").fillna(0)
-    df["activity_type"] = df["activity_type"].fillna("operating")
-    return df
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sql, conn, params={"cid": company_id})
+        df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
+        df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+        df["vat_amount"] = pd.to_numeric(df["vat_amount"], errors="coerce").fillna(0)
+        df["withholding_tax"] = pd.to_numeric(df["withholding_tax"], errors="coerce").fillna(0)
+        df["activity_type"] = df["activity_type"].fillna("operating")
+        return df
+    except Exception as e:
+        print(f"ERROR loading financial data: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=30)
@@ -236,12 +298,16 @@ def load_account_snapshots(company_id: int = 1) -> pd.DataFrame:
           AND is_active = true
         ORDER BY account_type, account_name
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"cid": company_id})
-    if not df.empty:
-        df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
-        df["entry_date"] = pd.to_datetime(df["entry_date"], errors="coerce")
-    return df
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sql, conn, params={"cid": company_id})
+        if not df.empty:
+            df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
+            df["entry_date"] = pd.to_datetime(df["entry_date"], errors="coerce")
+        return df
+    except Exception as e:
+        print(f"ERROR loading account snapshots: {e}")
+        return pd.DataFrame()
 
 
 def delete_transactions(ids: list[int], company_id: int = 1) -> int:
@@ -256,11 +322,15 @@ def delete_transactions(ids: list[int], company_id: int = 1) -> int:
         DELETE FROM transactions
         WHERE id = ANY(:ids) AND company_id = :cid
     """)
-    with engine.begin() as conn:
-        result = conn.execute(sql, {"ids": ids, "cid": company_id})
-    # Invalidate ALL cached data across all pages so every page reflects the deletion
-    st.cache_data.clear()
-    return result.rowcount
+    try:
+        with engine.begin() as conn:
+            result = conn.execute(sql, {"ids": ids, "cid": company_id})
+        st.cache_data.clear()
+        return result.rowcount
+    except Exception as e:
+        print(f"ERROR deleting transactions: {e}")
+        st.error(f"Failed to delete transactions: {str(e)[:100]}")
+        return 0
 
 
 @st.cache_data(ttl=30)
@@ -272,6 +342,10 @@ def load_reports(company_id: int = 1) -> pd.DataFrame:
         WHERE company_id = :cid
         ORDER BY period_year DESC, period_month DESC
     """)
-    with engine.connect() as conn:
-        df = pd.read_sql(sql, conn, params={"cid": company_id})
-    return df
+    try:
+        with engine.connect() as conn:
+            df = pd.read_sql(sql, conn, params={"cid": company_id})
+        return df
+    except Exception as e:
+        print(f"ERROR loading reports: {e}")
+        return pd.DataFrame()
